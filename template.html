@@ -523,6 +523,102 @@
     .stat-row-inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .detail-inner { grid-template-columns: 1fr; }
   }
+
+  .login-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: 340px;
+    padding: 32px 28px;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+  }
+
+  .login-card h2 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .login-card p.sub {
+    margin: 0 0 20px;
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+
+  .login-field { margin-bottom: 14px; }
+
+  .login-field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-muted);
+    margin-bottom: 6px;
+  }
+
+  .login-field input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--ink);
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  .login-field input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1px var(--focus);
+  }
+
+  .login-submit {
+    width: 100%;
+    margin-top: 6px;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .login-submit:hover { background: var(--accent-strong); }
+
+  .login-error {
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--status-high);
+    min-height: 16px;
+  }
+
+  .logout-link {
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--ink-faint);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+  }
+
+  .app-content { display: none; }
+  .app-content.pp-unlocked { display: block; }
+  .login-gate.pp-hidden { display: none; }
 </style>
 
 <script>
@@ -538,7 +634,24 @@
   })();
 </script>
 
-<div class="wrap">
+<div class="login-gate" id="login-gate">
+  <form class="login-card" id="login-form" autocomplete="off">
+    <h2>Price Pulse</h2>
+    <p class="sub">Sign in to view the dashboard.</p>
+    <div class="login-field">
+      <label for="login-user">Username</label>
+      <input id="login-user" type="text" autocomplete="username" required>
+    </div>
+    <div class="login-field">
+      <label for="login-pass">Password</label>
+      <input id="login-pass" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="login-submit" type="submit">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+  </form>
+</div>
+
+<div class="wrap app-content">
   <header class="report-head">
     <div>
       <p class="eyebrow">Dashboard &middot; Amazon Sellers</p>
@@ -546,7 +659,7 @@
       <p class="meta">Daily average of net aggregate, net consolidated, and buy&nbsp;box&nbsp;net price per SKU &middot; window <span id="date-start">__DATE_START__</span> &ndash; <span id="date-end">__DATE_END__</span></p>
     </div>
     <div class="head-right">
-      snapshot generated <span id="generated-at">__GENERATED_AT__</span><br>
+      snapshot generated <span id="generated-at">__GENERATED_AT__</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
       source: amazon_sellers_report_history
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; justify-content:flex-end;">
         <button class="refresh-btn theme-toggle" id="theme-toggle" type="button" title="Toggle dark mode">
@@ -982,5 +1095,65 @@
   updateThemeIcon();
 
   applyFilterSort();
+})();
+</script>
+
+<script>
+(function () {
+  // sha256("username:password") for each allowed account - the plaintext
+  // password never appears in this page's source.
+  var ALLOWED = {
+    '4d08ec379452842abba7f9574c102f129dff27d6ec5283d46b9195bcd01b316e': true,
+    '1aa9c67a978599b23b69ff0ec88f582701a885be45532d686273c9580eea7628': true
+  };
+  var SESSION_KEY = 'pp-auth';
+
+  var gate = document.getElementById('login-gate');
+  var content = document.querySelector('.app-content');
+  var form = document.getElementById('login-form');
+  var errorEl = document.getElementById('login-error');
+
+  function unlock() {
+    gate.classList.add('pp-hidden');
+    content.classList.add('pp-unlocked');
+  }
+
+  function sha256Hex(text) {
+    var data = new TextEncoder().encode(text);
+    return crypto.subtle.digest('SHA-256', data).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+        return b.toString(16).padStart(2, '0');
+      }).join('');
+    });
+  }
+
+  try {
+    if (sessionStorage.getItem(SESSION_KEY) === '1') unlock();
+  } catch (e) {}
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var user = document.getElementById('login-user').value.trim().toLowerCase();
+    var pass = document.getElementById('login-pass').value;
+    sha256Hex(user + ':' + pass).then(function (hash) {
+      if (ALLOWED[hash]) {
+        errorEl.textContent = '';
+        try { sessionStorage.setItem(SESSION_KEY, '1'); } catch (e) {}
+        unlock();
+      } else {
+        errorEl.textContent = 'Incorrect username or password.';
+      }
+    });
+  });
+
+  var logoutLink = document.getElementById('logout-link');
+  if (logoutLink) {
+    logoutLink.addEventListener('click', function () {
+      try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+      content.classList.remove('pp-unlocked');
+      gate.classList.remove('pp-hidden');
+      form.reset();
+    });
+  }
 })();
 </script>
