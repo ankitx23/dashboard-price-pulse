@@ -666,7 +666,7 @@
       <p class="meta">Daily average of net aggregate, net consolidated, and buy&nbsp;box&nbsp;net price per SKU &middot; window <span id="date-start">Sep 16, 2026</span> &ndash; <span id="date-end">Sep 22, 2026</span></p>
     </div>
     <div class="head-right">
-      snapshot generated <span id="generated-at">Sep 23, 2026 10:30</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
+      snapshot generated <span id="generated-at">Sep 23, 2026 11:08</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
       source: amazon_sellers_report_history
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; justify-content:flex-end;">
         <button class="refresh-btn theme-toggle" id="theme-toggle" type="button" title="Toggle dark mode">
@@ -1098,6 +1098,62 @@
     });
   }
 
+  var CARRIERS = { Verizon: 1, ATT: 1, TMobile: 1, Sprint: 1, USC: 1, Cricket: 1 };
+
+  // Family = SKU minus condition, unlock flag, carrier and color, e.g.
+  // 'Apple-iPhone11-64GB-Verizon-Black-Unl GD' -> 'Apple-iPhone11-64GB'.
+  // Tablets keep WiFi/CEL and watches keep size/material/GPS-CEL, since
+  // those change the price; only the color (and watch band) is dropped.
+  function skuFamily(sku) {
+    var segs = sku.split(' ')[0].split('-');
+    var color = '';
+    if (segs[segs.length - 1] === 'Unl') segs.pop();
+    var bandIdx = -1;
+    if (segs[0] === 'Watch') {
+      for (var i = 0; i < segs.length; i++) if (segs[i].indexOf(':') !== -1) { bandIdx = i; break; }
+    }
+    if (bandIdx !== -1) {
+      color = segs.slice(bandIdx).join('-');
+      segs = segs.slice(0, bandIdx);
+    } else if (!CARRIERS[segs[segs.length - 1]]) {
+      color = segs.pop();
+    }
+    segs = segs.filter(function (s) { return !CARRIERS[s]; });
+    return { family: segs.join('-'), color: color };
+  }
+
+  function mean(vals) {
+    var v = vals.filter(function (x) { return x !== null && x !== undefined; });
+    if (!v.length) return null;
+    return Math.round(v.reduce(function (a, b) { return a + b; }, 0) / v.length * 100) / 100;
+  }
+
+  function buildFamilies(rows) {
+    var byFam = {}, order = [];
+    rows.forEach(function (row) {
+      var f = skuFamily(row.sku);
+      if (!byFam[f.family]) { byFam[f.family] = { name: f.family, rows: [], colors: [] }; order.push(f.family); }
+      var g = byFam[f.family];
+      g.rows.push(row);
+      if (f.color && g.colors.indexOf(f.color) === -1) g.colors.push(f.color);
+    });
+    order.sort();
+    return order.map(function (name) {
+      var g = byFam[name];
+      var rec = { lead: [name, g.rows.length, g.colors.join(', ')], metrics: {} };
+      METRICS.forEach(function (m) {
+        var avgs = g.rows.map(function (r) { return r.avg ? r.avg[m] : null; })
+          .filter(function (x) { return x !== null && x !== undefined; });
+        rec.metrics[m] = {
+          days: DATES.map(function (_, i) { return mean(g.rows.map(function (r) { return r[m][i]; })); }),
+          avg: mean(avgs),
+          tail: [avgs.length ? Math.min.apply(null, avgs) : null, avgs.length ? Math.max.apply(null, avgs) : null]
+        };
+      });
+      return rec;
+    });
+  }
+
   function buildWorkbook(ExcelJS, rows) {
     var NAVY = 'FF1F3864', WHITE = 'FFFFFFFF', STRIPE = 'FFF2F5FA', BORDER = 'FFD0D7E2';
     var GROUP_FILL = { net_aggr: 'FF2E75B6', net_cons: 'FF548235', buy_box_net: 'FFC55A11' };
@@ -1105,87 +1161,131 @@
       'Trending Up': 'FFE2EFDA', 'Trending Down': 'FFF8CBAD' };
     var money = '"$"#,##0.00';
     var thin = { style: 'thin', color: { argb: BORDER } };
-
-    var wb = new ExcelJS.Workbook();
-    wb.creator = 'Price Pulse';
-    wb.created = new Date();
-    var ws = wb.addWorksheet('Price Pulse', { views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }] });
-
-    var nCols = 3 + METRICS.length * (DATES.length + 3);
     var dayLabels = DATES.map(function (d) { return fmtDate(d).replace(/, \d{4}$/, ''); });
+    var span = DATES.length + 3;
 
-    // Row 1: title
-    ws.mergeCells(1, 1, 1, nCols);
-    var t = ws.getCell(1, 1);
-    t.value = 'Price Pulse  ·  ' + fmtDate(DATES[0]) + ' – ' + fmtDate(DATES[DATES.length - 1]) +
-      '  ·  ' + rows.length.toLocaleString() + ' SKUs' + (state.query ? '  ·  filter: "' + state.query + '"' : '');
-    t.font = { bold: true, size: 14, color: { argb: NAVY } };
-    t.alignment = { vertical: 'middle' };
-    ws.getRow(1).height = 26;
+    // opts: title, lead [{header, width, align}], tail {headers, money}, records [{lead, metrics}]
+    function writeSheet(ws, opts) {
+      var nLead = opts.lead.length;
+      var nCols = nLead + METRICS.length * span;
 
-    // Row 2: metric group headers; Row 3: column headers
-    var r2 = ws.getRow(2), r3 = ws.getRow(3);
-    ['SKU', 'Amazon SKU', 'ASIN'].forEach(function (h, i) {
-      ws.mergeCells(2, i + 1, 3, i + 1);
-      r2.getCell(i + 1).value = h;
-    });
-    var col = 4;
-    METRICS.forEach(function (m) {
-      var span = DATES.length + 3;
-      ws.mergeCells(2, col, 2, col + span - 1);
-      var g = r2.getCell(col);
-      g.value = METRIC_LABEL[m];
-      g.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GROUP_FILL[m] } };
-      dayLabels.concat(['7-day avg', 'Variability', 'Trend']).forEach(function (h, i) {
-        r3.getCell(col + i).value = h;
+      ws.mergeCells(1, 1, 1, nCols);
+      var t = ws.getCell(1, 1);
+      t.value = opts.title;
+      t.font = { bold: true, size: 14, color: { argb: NAVY } };
+      t.alignment = { vertical: 'middle' };
+      ws.getRow(1).height = 26;
+
+      var r2 = ws.getRow(2), r3 = ws.getRow(3);
+      opts.lead.forEach(function (l, i) {
+        ws.mergeCells(2, i + 1, 3, i + 1);
+        r2.getCell(i + 1).value = l.header;
       });
-      col += span;
-    });
-    [r2, r3].forEach(function (r) {
-      r.height = 20;
-      for (var c = 1; c <= nCols; c++) {
-        var cell = r.getCell(c);
-        if (!cell.fill || !cell.fill.fgColor) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-        cell.font = { bold: true, color: { argb: WHITE } };
-        cell.alignment = { horizontal: c <= 3 ? 'left' : 'center', vertical: 'middle' };
-        cell.border = { top: thin, left: thin, bottom: thin, right: thin };
-      }
-    });
-
-    // Data rows
-    rows.forEach(function (row, idx) {
-      var vals = [row.sku, row.amz_sku || '', row.asin || ''];
+      var col = nLead + 1;
       METRICS.forEach(function (m) {
-        var tr = (row.trend && row.trend[m]) || {};
-        vals = vals.concat(row[m].map(function (v) { return v === null || v === undefined ? null : v; }),
-          [row.avg ? row.avg[m] : null, tr.variability || '', tr.trend || '']);
+        ws.mergeCells(2, col, 2, col + span - 1);
+        var g = r2.getCell(col);
+        g.value = METRIC_LABEL[m];
+        g.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GROUP_FILL[m] } };
+        dayLabels.concat(['7-day avg'], opts.tail.headers).forEach(function (h, i) {
+          r3.getCell(col + i).value = h;
+        });
+        col += span;
       });
-      var r = ws.addRow(vals);
-      var stripe = idx % 2 === 1;
-      r.eachCell({ includeEmpty: true }, function (cell, c) {
-        cell.border = { bottom: thin };
-        if (stripe) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: STRIPE } };
-        if (c > 3) {
-          var pos = (c - 4) % (DATES.length + 3);
-          if (pos < DATES.length + 1) {
+      [r2, r3].forEach(function (r) {
+        r.height = 20;
+        for (var c = 1; c <= nCols; c++) {
+          var cell = r.getCell(c);
+          if (!cell.fill || !cell.fill.fgColor) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+          cell.font = { bold: true, color: { argb: WHITE } };
+          cell.alignment = { horizontal: c <= nLead ? 'left' : 'center', vertical: 'middle', wrapText: true };
+          cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+        }
+      });
+
+      opts.records.forEach(function (rec, idx) {
+        var vals = rec.lead.slice();
+        METRICS.forEach(function (m) {
+          var mm = rec.metrics[m];
+          vals = vals.concat(mm.days, [mm.avg], mm.tail);
+        });
+        var r = ws.addRow(vals);
+        var stripe = idx % 2 === 1;
+        r.eachCell({ includeEmpty: true }, function (cell, c) {
+          cell.border = { bottom: thin };
+          if (stripe) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: STRIPE } };
+          if (c <= nLead) {
+            if (opts.lead[c - 1].align) cell.alignment = { horizontal: opts.lead[c - 1].align };
+            return;
+          }
+          var pos = (c - nLead - 1) % span;
+          if (pos < DATES.length + 1 || opts.tail.money) {
             cell.numFmt = money;
             if (pos === DATES.length) cell.font = { bold: true };
           } else {
             cell.alignment = { horizontal: 'center' };
             if (TAG_FILL[cell.value]) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TAG_FILL[cell.value] } };
           }
-        }
+        });
       });
+
+      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: nCols } };
+      opts.lead.forEach(function (l, i) { ws.getColumn(i + 1).width = l.width; });
+      for (var c = nLead + 1; c <= nCols; c++) {
+        var pos = (c - nLead - 1) % span;
+        ws.getColumn(c).width = pos < DATES.length ? 10 : (pos === DATES.length ? 11 : 12);
+      }
+    }
+
+    function textWidth(values, min, max) {
+      return Math.min(max, Math.max(min, values.reduce(function (w, v) { return Math.max(w, String(v).length); }, 0) + 2));
+    }
+
+    var windowLabel = fmtDate(DATES[0]) + ' – ' + fmtDate(DATES[DATES.length - 1]);
+    var filterLabel = state.query ? '  ·  filter: "' + state.query + '"' : '';
+    var families = buildFamilies(rows);
+
+    var wb = new ExcelJS.Workbook();
+    wb.creator = 'Price Pulse';
+    wb.created = new Date();
+
+    var skuRecords = rows.map(function (row) {
+      var rec = { lead: [row.sku, skuFamily(row.sku).family, row.amz_sku || '', row.asin || ''], metrics: {} };
+      METRICS.forEach(function (m) {
+        var tr = (row.trend && row.trend[m]) || {};
+        rec.metrics[m] = {
+          days: row[m].map(function (v) { return v === null || v === undefined ? null : v; }),
+          avg: row.avg ? row.avg[m] : null,
+          tail: [tr.variability || '', tr.trend || '']
+        };
+      });
+      return rec;
     });
 
-    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: nCols } };
-    ws.getColumn(1).width = Math.min(60, Math.max(12, rows.reduce(function (w, r) { return Math.max(w, r.sku.length); }, 0) + 2));
-    ws.getColumn(2).width = 34;
-    ws.getColumn(3).width = 13;
-    for (var c = 4; c <= nCols; c++) {
-      var pos = (c - 4) % (DATES.length + 3);
-      ws.getColumn(c).width = pos < DATES.length ? 10 : (pos === DATES.length ? 11 : 12);
-    }
+    writeSheet(wb.addWorksheet('Price Pulse', { views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }] }), {
+      title: 'Price Pulse  ·  ' + windowLabel + '  ·  ' + rows.length.toLocaleString() + ' SKUs' + filterLabel,
+      lead: [
+        { header: 'SKU', width: textWidth(rows.map(function (r) { return r.sku; }), 12, 60) },
+        { header: 'Family', width: textWidth(families.map(function (f) { return f.lead[0]; }), 12, 45) },
+        { header: 'Amazon SKU', width: 34 },
+        { header: 'ASIN', width: 13 }
+      ],
+      tail: { headers: ['Variability', 'Trend'], money: false },
+      records: skuRecords
+    });
+
+    writeSheet(wb.addWorksheet('Families', { views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }] }), {
+      title: 'Price Pulse Families  ·  ' + windowLabel + '  ·  ' + families.length.toLocaleString() +
+        ' families from ' + rows.length.toLocaleString() + ' SKUs' + filterLabel,
+      lead: [
+        { header: 'Family', width: textWidth(families.map(function (f) { return f.lead[0]; }), 12, 45) },
+        { header: 'SKUs', width: 7, align: 'center' },
+        { header: 'Colors', width: 40 }
+      ],
+      tail: { headers: ['Lowest SKU avg', 'Highest SKU avg'], money: true },
+      records: families
+    });
+
     return wb;
   }
 
