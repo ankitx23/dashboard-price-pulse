@@ -1250,7 +1250,7 @@
     wb.created = new Date();
 
     var skuRecords = rows.map(function (row) {
-      var rec = { lead: [row.sku, skuFamily(row.sku).family, row.amz_sku || '', row.asin || ''], metrics: {} };
+      var rec = { lead: [skuFamily(row.sku).family, row.sku, row.amz_sku || '', row.asin || ''], metrics: {} };
       METRICS.forEach(function (m) {
         var tr = (row.trend && row.trend[m]) || {};
         rec.metrics[m] = {
@@ -1261,12 +1261,16 @@
       });
       return rec;
     });
+    // Keep each family's SKUs together; within a family, keep the page's sort order.
+    skuRecords = skuRecords.map(function (rec, i) { return { rec: rec, i: i }; })
+      .sort(function (a, b) { return a.rec.lead[0] < b.rec.lead[0] ? -1 : a.rec.lead[0] > b.rec.lead[0] ? 1 : a.i - b.i; })
+      .map(function (x) { return x.rec; });
 
-    writeSheet(wb.addWorksheet('Price Pulse', { views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }] }), {
+    writeSheet(wb.addWorksheet('Price Pulse', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] }), {
       title: 'Price Pulse  ·  ' + windowLabel + '  ·  ' + rows.length.toLocaleString() + ' SKUs' + filterLabel,
       lead: [
-        { header: 'SKU', width: textWidth(rows.map(function (r) { return r.sku; }), 12, 60) },
         { header: 'Family', width: textWidth(families.map(function (f) { return f.lead[0]; }), 12, 45) },
+        { header: 'SKU', width: textWidth(rows.map(function (r) { return r.sku; }), 12, 60) },
         { header: 'Amazon SKU', width: 34 },
         { header: 'ASIN', width: 13 }
       ],
