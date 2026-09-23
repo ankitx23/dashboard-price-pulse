@@ -132,6 +132,31 @@
     font-family: "IBM Plex Mono", monospace;
   }
 
+  .published-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 5px 12px;
+    border-radius: 980px;
+    background: var(--surface-2);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+  }
+  .published-badge strong { font-weight: 600; }
+  .published-badge .published-at { color: var(--ink-faint); }
+  .published-badge .published-at::before { content: "\00b7"; margin-right: 8px; }
+  .published-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--status-stable);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-stable) 25%, transparent);
+  }
+  .published-badge.stale .published-dot {
+    background: var(--status-high);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-high) 25%, transparent);
+  }
+
   .stat-row {
     position: sticky;
     top: 0;
@@ -666,7 +691,12 @@
       <p class="meta">Daily average of net aggregate, net consolidated, and buy&nbsp;box&nbsp;net price per SKU &middot; window <span id="date-start">__DATE_START__</span> &ndash; <span id="date-end">__DATE_END__</span></p>
     </div>
     <div class="head-right">
-      snapshot generated <span id="generated-at">__GENERATED_AT__</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
+      <div class="published-badge" id="published-badge" title="When the daily refresh last pushed data to this page">
+        <span class="published-dot"></span>
+        <span>Published <strong id="published-ago">&mdash;</strong></span>
+        <span class="published-at" id="generated-at">__GENERATED_AT__</span>
+      </div>
+      <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
       source: amazon_sellers_report_history
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; justify-content:flex-end;">
         <button class="refresh-btn theme-toggle" id="theme-toggle" type="button" title="Toggle dark mode">
@@ -1046,6 +1076,39 @@
     return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
+  // Live "Published N min ago" timer. published_at is stamped by publish_site.py.
+  var publishedAt = raw.published_at ? new Date(raw.published_at) : null;
+
+  function fmtAgo(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return 'just now';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + ' min ago';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + ' hr ' + (m % 60) + ' min ago';
+    var d = Math.floor(h / 24);
+    return d + (d === 1 ? ' day ' : ' days ') + (h % 24) + ' hr ago';
+  }
+
+  function fmtStamp(d) {
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var h = d.getHours(), ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    var min = d.getMinutes() < 10 ? '0' + d.getMinutes() : d.getMinutes();
+    return months[d.getMonth()] + ' ' + d.getDate() + ', ' + h + ':' + min + ' ' + ampm;
+  }
+
+  function tickPublished() {
+    if (!publishedAt || isNaN(publishedAt)) return;
+    var age = Date.now() - publishedAt.getTime();
+    document.getElementById('published-ago').textContent = fmtAgo(age);
+    document.getElementById('generated-at').textContent = fmtStamp(publishedAt);
+    // A daily refresh should never be more than ~26h old; flag it red if it is.
+    document.getElementById('published-badge').classList.toggle('stale', age > 26 * 3600 * 1000);
+  }
+  tickPublished();
+  setInterval(tickPublished, 30000);
+
   var refreshBtn = document.getElementById('refresh-btn');
   var refreshStatus = document.getElementById('refresh-status');
 
@@ -1065,7 +1128,8 @@
         DATES = data.dates;
         document.getElementById('date-start').textContent = fmtDate(DATES[0]);
         document.getElementById('date-end').textContent = fmtDate(DATES[DATES.length - 1]);
-        document.getElementById('generated-at').textContent = fmtGeneratedNow();
+        if (data.published_at) publishedAt = new Date(data.published_at);
+        tickPublished();
         document.getElementById('stat-count').textContent = ROWS.length.toLocaleString();
         document.getElementById('stat-aggr').innerHTML = fmtMoney(computeOverall('net_aggr')) || '&mdash;';
         document.getElementById('stat-cons').innerHTML = fmtMoney(computeOverall('net_cons')) || '&mdash;';
