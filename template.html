@@ -1105,7 +1105,7 @@
   // Tablets keep WiFi/CEL and watches keep size/material/GPS-CEL, since
   // those change the price; only the color (and watch band) is dropped.
   function skuFamily(sku) {
-    var segs = sku.split(' ')[0].split('-');
+    var segs = sku.split(' ')[0].replace(/-T-Mobile(?=-|$)/i, '-TMobile').split('-');
     var color = '';
     if (segs[segs.length - 1] === 'Unl') segs.pop();
     var bandIdx = -1;

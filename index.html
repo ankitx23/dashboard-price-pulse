@@ -666,7 +666,7 @@
       <p class="meta">Daily average of net aggregate, net consolidated, and buy&nbsp;box&nbsp;net price per SKU &middot; window <span id="date-start">Sep 16, 2026</span> &ndash; <span id="date-end">Sep 22, 2026</span></p>
     </div>
     <div class="head-right">
-      snapshot generated <span id="generated-at">Sep 23, 2026 11:08</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
+      snapshot generated <span id="generated-at">Sep 23, 2026 15:15</span> &middot; <button class="logout-link" id="logout-link" type="button">Sign out</button><br>
       source: amazon_sellers_report_history
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; justify-content:flex-end;">
         <button class="refresh-btn theme-toggle" id="theme-toggle" type="button" title="Toggle dark mode">
@@ -1105,7 +1105,7 @@
   // Tablets keep WiFi/CEL and watches keep size/material/GPS-CEL, since
   // those change the price; only the color (and watch band) is dropped.
   function skuFamily(sku) {
-    var segs = sku.split(' ')[0].split('-');
+    var segs = sku.split(' ')[0].replace(/-T-Mobile(?=-|$)/i, '-TMobile').split('-');
     var color = '';
     if (segs[segs.length - 1] === 'Unl') segs.pop();
     var bandIdx = -1;
