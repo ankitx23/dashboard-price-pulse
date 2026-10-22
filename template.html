@@ -253,6 +253,30 @@
     pointer-events: none;
   }
 
+  .week-toggle {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 980px;
+    background: var(--surface-2);
+  }
+  .week-toggle button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--ink-muted);
+    border-radius: 980px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .week-toggle button:hover:not(:disabled) { color: var(--ink); }
+  .week-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .week-toggle button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .week-toggle button:disabled { opacity: 0.45; cursor: default; }
+
   .result-count {
     font-size: 12.5px;
     color: var(--ink-muted);
@@ -748,6 +772,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="search" type="text" placeholder="Search SKU, Amazon SKU, or ASIN&hellip;" autocomplete="off">
     </div>
+    <div class="week-toggle" role="group" aria-label="Week shown">
+      <button type="button" data-week="current" aria-pressed="true">This week</button>
+      <button type="button" data-week="prev" aria-pressed="false" title="The 7 days before this window">Last week</button>
+    </div>
     <div class="result-count" id="result-count"></div>
     <div class="sort-hint">click a column to sort &middot; click a row for the daily breakdown</div>
   </div>
@@ -784,11 +812,13 @@
   var raw = JSON.parse(document.getElementById('report-data').textContent);
   var DATES = raw.dates;
   var ROWS = raw.rows;
+  // This week = top-level dates/rows; last week = raw.prev (null if no history yet).
+  var WEEKS = { current: { dates: raw.dates, rows: raw.rows }, prev: raw.prev || null };
   var METRICS = ['net_aggr', 'net_cons', 'buy_box_net'];
   var METRIC_LABEL = { net_aggr: 'Net aggr', net_cons: 'Net cons', buy_box_net: 'Buy box net' };
   var PAGE_SIZE = 50;
 
-  var state = { query: '', sortKey: 'sku', sortDir: 1, page: 0, filtered: ROWS.slice(), expanded: null };
+  var state = { query: '', sortKey: 'sku', sortDir: 1, page: 0, filtered: ROWS.slice(), expanded: null, week: 'current' };
 
   function fmtMoney(v) {
     if (v === null || v === undefined) return null;
@@ -1137,17 +1167,10 @@
         return resp.json();
       })
       .then(function (data) {
-        ROWS = data.rows;
-        DATES = data.dates;
-        document.getElementById('date-start').textContent = fmtDate(DATES[0]);
-        document.getElementById('date-end').textContent = fmtDate(DATES[DATES.length - 1]);
+        WEEKS = { current: { dates: data.dates, rows: data.rows }, prev: data.prev || null };
         if (data.published_at) publishedAt = new Date(data.published_at);
         tickPublished();
-        document.getElementById('stat-count').textContent = ROWS.length.toLocaleString();
-        document.getElementById('stat-aggr').innerHTML = fmtMoney(computeOverall('net_aggr')) || '&mdash;';
-        document.getElementById('stat-cons').innerHTML = fmtMoney(computeOverall('net_cons')) || '&mdash;';
-        document.getElementById('stat-buybox').innerHTML = fmtMoney(computeOverall('buy_box_net')) || '&mdash;';
-        applyFilterSort();
+        showWeek(WEEKS[state.week] ? state.week : 'current');
         refreshStatus.className = 'refresh-status ok';
         refreshStatus.textContent = 'Updated ✓';
       })
@@ -1159,6 +1182,33 @@
         refreshBtn.disabled = false;
         refreshBtn.classList.remove('spinning');
       });
+  });
+
+  var weekButtons = document.querySelectorAll('.week-toggle button');
+
+  function showWeek(which) {
+    state.week = which;
+    ROWS = WEEKS[which].rows;
+    DATES = WEEKS[which].dates;
+    document.getElementById('date-start').textContent = fmtDate(DATES[0]);
+    document.getElementById('date-end').textContent = fmtDate(DATES[DATES.length - 1]);
+    document.getElementById('stat-count').textContent = ROWS.length.toLocaleString();
+    document.getElementById('stat-aggr').innerHTML = fmtMoney(computeOverall('net_aggr')) || '&mdash;';
+    document.getElementById('stat-cons').innerHTML = fmtMoney(computeOverall('net_cons')) || '&mdash;';
+    document.getElementById('stat-buybox').innerHTML = fmtMoney(computeOverall('buy_box_net')) || '&mdash;';
+    Array.prototype.forEach.call(weekButtons, function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-week') === which ? 'true' : 'false');
+      if (b.getAttribute('data-week') === 'prev') b.disabled = !WEEKS.prev;
+    });
+    applyFilterSort();
+  }
+
+  Array.prototype.forEach.call(weekButtons, function (b) {
+    if (b.getAttribute('data-week') === 'prev') b.disabled = !WEEKS.prev;
+    b.addEventListener('click', function () {
+      var which = b.getAttribute('data-week');
+      if (which !== state.week && WEEKS[which]) showWeek(which);
+    });
   });
 
   var downloadBtn = document.getElementById('download-btn');
