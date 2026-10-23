@@ -439,6 +439,15 @@
     color: var(--ink-faint);
   }
 
+  .prev-week-line {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border, rgba(127,127,127,.3));
+    font-size: 11px;
+    color: var(--ink-muted);
+  }
+  .prev-week-line b { font-weight: 600; color: var(--ink-faint); }
+
   tr.detail-row td {
     background: var(--surface-2);
     padding: 0;
@@ -938,6 +947,37 @@
       '</div><div class="combined-line">' + trend.combined + '</div>';
   }
 
+  // Past-week comparison line, shown under the combined tag when viewing
+  // this week. Keyed by SKU; rebuilt whenever WEEKS.prev is replaced.
+  var prevIndex = { src: null, map: {} };
+  function prevRowFor(sku) {
+    if (state.week !== 'current' || !WEEKS.prev) return null;
+    if (prevIndex.src !== WEEKS.prev) {
+      prevIndex = { src: WEEKS.prev, map: {} };
+      WEEKS.prev.rows.forEach(function (r) { prevIndex.map[r.sku] = r; });
+    }
+    return prevIndex.map[sku] || null;
+  }
+
+  function prevWeekLine(row, metric) {
+    if (state.week !== 'current' || !WEEKS.prev) return '';
+    var d = WEEKS.prev.dates;
+    var label = 'Past week (' + fmtDate(d[0]) + ' &ndash; ' + fmtDate(d[d.length - 1]) + '): ';
+    var p = prevRowFor(row.sku);
+    var pt = p && p.trend && p.trend[metric];
+    if (!pt || pt.variability === 'N/A') return '<div class="prev-week-line">' + label + 'no data</div>';
+    var txt = label + '<b>' + pt.combined + '</b>';
+    var pa = p.avg && p.avg[metric], ca = row.avg && row.avg[metric];
+    if (pa != null) {
+      txt += ' &middot; avg ' + fmtMoney(pa);
+      if (ca != null && pa) {
+        var ch = (ca - pa) / pa * 100;
+        txt += ' (now ' + (ch >= 0 ? '+' : '&minus;') + Math.abs(ch).toFixed(1) + '%)';
+      }
+    }
+    return '<div class="prev-week-line">' + txt + '</div>';
+  }
+
   function detailCard(row, metric, chartW) {
     chartW = chartW || 320;
     var big = renderSparkSVG(row[metric], chartW, 90, true);
@@ -949,7 +989,7 @@
       row[metric].map(function (v, i) { return '<div class="d">' + fmtDate(DATES[i]) + '</div>'; }).join('') +
       row[metric].map(function (v) { return '<div class="v">' + (v === null || v === undefined ? '&ndash;' : v.toFixed(2)) + '</div>'; }).join('') +
       '</div>';
-    return '<div class="detail-card"><h4>' + METRIC_LABEL[metric] + '</h4>' + tagRow(row.trend[metric], true) + big + figs + statsLine(row.trend[metric]) + '</div>';
+    return '<div class="detail-card"><h4>' + METRIC_LABEL[metric] + '</h4>' + tagRow(row.trend[metric], true) + big + figs + statsLine(row.trend[metric]) + prevWeekLine(row, metric) + '</div>';
   }
 
   function renderRows() {
